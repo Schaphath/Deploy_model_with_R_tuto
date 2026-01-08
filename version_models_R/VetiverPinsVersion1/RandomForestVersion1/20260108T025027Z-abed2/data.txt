@@ -1,0 +1,17 @@
+file: RandomForestVersion1.rds
+file_size: 802234
+pin_hash: abed2bb17332b097
+type: rds
+title: 'RandomForestVersion1: a pinned list'
+description: A ranger classification modeling workflow
+tags: ~
+urls: ~
+created: 20260108T025027Z
+api_version: 1
+user:
+  required_pkgs:
+  - parsnip
+  - ranger
+  - recipes
+  - workflows
+  renv_lock: ~

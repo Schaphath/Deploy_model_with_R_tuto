@@ -1,0 +1,193 @@
+---
+title: "Models training"
+author: "SK"
+format: html
+editor: visual
+---
+
+
+
+
+
+```{r}
+library(tidymodels)
+library(dplyr)
+library(readr)
+
+```
+
+
+```{r}
+
+# Path data 
+path_data <- here::here("data", "process", "cardio_impute.csv")
+
+#--- Dataset 
+cardio_impute <- read.csv(path_data, sep = ",") 
+
+```
+
+
+```{r}
+cardio_impute <- cardio_impute |> mutate(
+  across(c(gender, cholesterol, gluc, smoke, alco, active, cardio), as.factor)
+  )
+  
+```
+
+
+```{r}
+# Relevel la variable cible   
+cardio_impute$cardio <- factor(cardio_impute$cardio)
+cardio_impute$cardio <- relevel(cardio_impute$cardio, ref = "1")
+
+```
+
+
+```{r}
+#===================#
+#   Sample dataset  #
+#===================#
+
+# Initial_split method (we keep 10% of original dataset)
+set.seed(1234)
+index_rs <- initial_split(cardio_impute, prop=0.10)
+cardio_rsample <- training(index_rs)
+
+# Split data into train and test set 
+set.seed(1234)
+cardio_split <- initial_split(cardio_rsample, prop = 0.70)
+cardio_train <- training(cardio_split)
+cardio_test <- testing(cardio_split)
+
+ # Bootstrape method
+set.seed(2345)
+# cardio_boot <- bootstraps(cardio_train)
+cardio_cv <- vfold_cv(cardio_train, v=10)
+
+```
+
+
+
+```{r}
+#========#
+# Recipe #
+#========#
+random_rec <- recipe(cardio~., data = cardio_train) |>
+  step_normalize(all_numeric_predictors()) |> 
+  step_dummy(c(cholesterol, gluc), one_hot = TRUE) |> 
+  step_nzv(all_predictors())
+
+
+prep(random_rec)
+
+```
+
+
+```{r}
+#=======================#
+#  Model specification  #
+#=======================#
+random_spec <- rand_forest(mtry = tune(), min_n = tune(), trees = tune())|>
+  set_engine("ranger") |> 
+  set_mode("classification")
+  
+
+random_wf <- workflow() |> 
+  add_recipe(random_rec) |> 
+  add_model(random_spec)
+
+random_wf
+
+
+```
+
+
+```{r}
+#==================#
+#  Fitting modele  #
+#==================#
+library(finetune)
+  
+doParallel::registerDoParallel()
+
+set.seed(234)
+random_rs <- tune_race_anova(
+  random_wf, 
+  cardio_cv, 
+  grid = 25, 
+  metrics = metric_set(recall), 
+  control = control_race(verbose_elim = TRUE)
+)
+
+```
+
+
+
+
+
+```{r}
+#==============#
+# Models plots #
+#==============#
+plot_race(random_rs)
+
+```
+
+
+```{r}
+#=================#
+# Show best model #
+#=================#
+show_best(random_rs)
+
+```
+
+
+```{r}
+#===============================#
+#  Final fitting & evaluation   #
+#===============================#
+cardio_metrics <- metric_set(sensitivity,recall,specificity,
+                             precision, accuracy  )
+
+random_best <- random_rs |> select_best(metric = "recall")
+
+random_final <- random_wf |> finalize_workflow(random_best) |> 
+  last_fit(split = cardio_split, metrics = cardio_metrics)
+
+```
+
+
+
+```{r}
+#============#
+#  Metrics   #
+#============#
+random_final |> collect_metrics() |> flextable()
+
+```
+
+
+
+```{r}
+#===================#
+# Confusion matrix  #
+#===================#
+random_final |> conf_mat_resampled()
+
+```
+
+
+```{r}
+#===========================#
+# Save randomForeset model  #
+#===========================#
+
+# Path model
+path_model <- here::here("models_R", "RandomForestVersion1.rds")
+
+saveRDS(random_final$.workflow[[1]], path_model)
+
+```
+

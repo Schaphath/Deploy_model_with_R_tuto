@@ -1,0 +1,637 @@
+---
+y---
+title: "Prédiction du risque cardiovasculaire"
+author: "Schaphath"
+format: html
+editor: visual
+---
+
+------------------------------------------------------------------------
+
+![Source image : google](images/cardiovasculaire.jfif){width="700"}
+
+------------------------------------------------------------------------
+
+### [Problématique]{.underline} :
+
+Comment aider les médecins à identifier les cas à risque cardiovasculaire élevé, en réduisant les faux négatifs tout en maîtrisant le coût des examens supplémentaires ?
+
+### [Objectif analytique]{.underline} :
+
+Développer un modèle permettant de prédire le risque cardiovasculaire à partir d'informations cliniques.
+
+### [Tâche]{.underline} :
+
+-   Classification binaire
+
+### [Caractéristiques]{.underline} :
+
+-   Age, sexe, taille, poids, cholestérol, glucose, tabac, alcool, activité physique.
+
+### [Méthodologie]{.underline} :
+
+-   Nettoyage + recodage cohérent des variables.
+
+-   Modèle de machine learning.
+
+-   Validation croisée et mesure de performance (Recall, Specificity, Precision, Accuracy).
+
+-   Détermination du seuil optimal selon les coûts d’erreur.
+
+### [Critères de succès]{.underline} :
+
+-   Recall ≥ 90 %
+
+-   Spécificité ≥ 0.90 %
+
+-   AUC ≥ 0.90
+
+### [Utilisateurs finaux]{.underline} :
+
+-   Médecins et services de dépistage.
+
+### [Impact attendu]{.underline} :
+
+-   Prise en charge plus rapide des cas à risque.
+
+-   Réduction des examens inutiles pour les patients sains.
+
+-   Gain de temps pour le corps médical.
+
+-   Appui à la prévention à grande échelle.
+
+------------------------------------------------------------------------
+
+### [Packages]{.underline}
+
+```{r, message=FALSE}
+
+# Liste des packages 
+library(tidyverse)
+library(naniar)
+library(ggpubr)
+library(sjPlot)
+library(DataExplorer)
+library(dlookr)
+library(flextable)
+library(here)
+
+```
+
+### [Données]{.underline}
+
+```{r, message=FALSE}
+
+path_data <- here::here("data", "raw", "cardio_train.csv")
+
+#--- Dataset 
+cardio <- read.csv(path_data, sep = ";") |> select(!id)
+
+cardioCopy <- cardio # copy dataset
+
+```
+
+
+
+### [Inspection des données]{.underline}
+
+```{r}
+#--- Inspection dataset  
+str(cardio)
+
+```
+
+```{r}
+#--- diagnose data : pas de données 
+diagnose(cardio) |>  flextable()
+
+```
+
+------------------------------------------------------------------------
+
+### [Analyse Exploratoire]{.underline}
+
+#### Analyse des valeurs manquantes
+
+```{r}
+#  MVA (Missing values analysis)
+cardio |> gg_miss_var() # not missing values 
+
+```
+
+#### Recodage des variables
+
+```{r}
+# age (années)
+cardio <-  cardio |> mutate(age = round(age/365, 0)) 
+
+# gender
+cardio$gender <- as.factor(cardio$gender) |> 
+  fct_recode("0" = "1", "1" = "2")
+
+# heigth en (m)
+cardio <-  cardio |> mutate(height = height/100)
+
+# IMC 
+cardio <- cardio |> mutate(imc = round(weight/(height)^2, 2)) |> 
+  relocate(imc, .after = weight) |> 
+  select(!c(height, weight))
+
+# cholesterol 
+cardio$cholesterol <- as.factor(cardio$cholesterol)
+
+# glucose 
+cardio$gluc <- as.factor(cardio$gluc)
+
+# smoke 
+cardio$smoke <- as.factor(cardio$smoke)
+  
+# alcoll 
+cardio$alco <- as.factor(cardio$alco)
+
+# active 
+cardio$active <- as.factor(cardio$active)
+
+# cardio
+cardio$cardio <- as.factor(cardio$cardio)
+
+```
+
+------------------------------------------------------------------------
+
+### [Analyse des variables numériques]{.underline}
+
+#### Variable cible
+
+```{r}
+#--- target : cardio
+freq(cardio$cardio, headings = F, totals = F) 
+
+```
+
+```{r}
+
+#--- freqPlot
+plot_target <- plot_frq(cardio$cardio, 
+         title = "Répartition des partients selon le risque cardiovasculaire", 
+         axis.labels = c("Non", "Oui"), 
+         axis.title = "Risque cardiovasculaire")
+
+plot_target
+
+```
+
+**Note** :
+
+-   Catégories équilibrées (il y'a autant de cas positif que négatif).
+-   Cas négatif (50.03%) et cas positif (49.97%).
+
+------------------------------------------------------------------------
+
+#### Description des caractéristiques
+
+```{r, message=FALSE}
+
+#--- describe num variables 
+stats <- c("n","na","mean","sd","se_mean","IQR","skewness","kurtosis")
+
+summary_num_var <- dlookr:: describe(
+  cardio,statistics = stats) |> flextable()
+
+summary_num_var
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- diagnosis num varibales 
+diag_num_var <- cardio |> diagnose_numeric() |> flextable()
+diag_num_var
+
+```
+
+**Note** : Les variables ***ap_hi*** et ***ap_lo*** contiennent des données suspectes, notamment des valeurs négatives. La variable ***imc*** présente également certaines incohérences. De manière générale, la distribution des données est majoritairement asymétrique. J’envisage donc d’appliquer une transformation à certaines variables afin d’améliorer leur distribution.
+
+------------------------------------------------------------------------
+
+### [Analyse des outliers]{.underline}
+
+#### Diagnostique des outliers
+
+```{r, message=FALSE}
+
+#--- Analysis outliers 
+diag_ouliers <- cardio |> diagnose_outlier() |> flextable()
+diag_ouliers
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- plot outliers 
+plot_outlier(cardio)
+
+```
+
+#### Histogrammes
+
+```{r, message=FALSE, message=FALSE}
+
+#--- histogrammes 
+plot_histogram(cardio)
+
+```
+
+**Note** : L’analyse des outliers montre effectivement qu’il existe une distorsion de certaines variables en raison d’une forte proportion de valeurs aberrantes. Ces valeurs influencent significativement la distribution des variables. Le diagnostic des outliers a également mis en évidence qu’une gestion efficace de ces valeurs permettrait d’obtenir une distribution plus cohérente. Suite à ce constat, je procéderai à une imputation des outliers, tout en veillant à préserver la stabilité des estimations.
+
+------------------------------------------------------------------------
+
+### [Imputation des outliers]{.underline}
+
+#### Distribution des imputations
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- impute age
+plot(imputate_outlier(cardio, age, method = "median"))
+
+#--- impute imc
+plot(imputate_outlier(cardio, imc, method = "median"))
+
+#--- impute ap_hi
+plot(imputate_outlier(cardio, ap_hi, method = "capping"))
+
+#--- impute ap_lo
+plot(imputate_outlier(cardio, ap_lo, method = "capping"))
+
+```
+
+**Note** : J’ai utilisé deux méthodes pour l’imputation des outliers de ces variables : l'imputation par la médiane et la méthode capping. Ces deux approches permettent de l'imiter l'impact des valeurs extrèmes et ainsi de réduire la dispersion de la distribution des variables. Par exemple, pour la variable ***ap_lo*** (pression artérielle diastolique), on observe une réduction significative de la variabilité après imputation :
+
+-   *skewness* : de 32.11 à 0.48
+
+-   *kurtosis* : de 1425.91 à -0.227
+
+-   *sd* : de 188.47 à 8.43
+
+-   *se_mean* : de 0.71 à 0.03
+
+------------------------------------------------------------------------
+
+#### Appliquer les imputation aux données
+
+```{r}
+
+#--- age
+imp_age <- imputate_outlier(cardio, age, method = "median", no_attrs = TRUE)
+
+cardio <- cardio |> dplyr::mutate(age = round(imp_age, 2))
+
+#--- imc
+imp_imc <- imputate_outlier(cardio, imc, method = "capping", no_attrs = TRUE)
+
+cardio <- cardio |> dplyr::mutate(imc = round(imp_imc, 2))
+
+#--- ap_hi
+imp_hi <- imputate_outlier(cardio, ap_hi, method = "median", no_attrs = TRUE)
+
+cardio <- cardio |> dplyr::mutate(ap_hi = round(imp_hi, 2))
+
+#--- ap_lo
+imp_lo <- imputate_outlier(cardio, ap_lo, method = "capping", no_attrs = TRUE)
+
+cardio <- cardio |> dplyr::mutate(ap_lo = round(imp_lo, 2))
+
+```
+
+
+#### Vérification outliers
+
+```{r}
+#--- new ouliers diagnose
+diag_outlier_afterimput <- diagnose_outlier(cardio) |> flextable()
+
+diag_outlier_afterimput
+  
+```
+
+#### Distribution des caractéristiques après imputation
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- histogrammes
+plot_histogram(cardio)
+
+#--- density plot 
+plot_density(cardio)
+
+
+```
+
+------------------------------------------------------------------------
+
+### [Analyse de la normalité des variables numériques]{.underline}
+
+```{r, message=FALSE, warning=FALSE}
+#--- qqplot 
+plot_normality(cardio)
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+#---
+table_normality <- normality(cardio) 
+
+table_normality <- table_normality |>
+  mutate(p_value = round(p_value, 6))
+
+table_norm <- table_normality |> flextable()
+
+table_norm
+
+```
+
+------------------------------------------------------------------------
+
+### [Boxplots et tests statistiques]{.underline}
+
+#### Boxplots
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- num variables by target 
+plot_boxplot(cardio, by = "cardio", geom_boxplot_args = list("outlier.color" = "red"))
+
+```
+
+
+
+
+
+
+#### Tests statistiques (non paramétriques)
+
+##### Age VS Cible
+
+```{r, message=FALSE}
+
+library(ggstatsplot)
+
+#--- Age VS target  
+ggbetweenstats(
+  data = cardio, 
+  x = cardio, 
+  y = age, 
+  type = "np"
+)
+
+```
+
+##### Imc VS Cible
+
+```{r}
+
+#--- imc VS target  
+ggbetweenstats(
+  data = cardio, 
+  x = cardio, 
+  y = imc, 
+  type = "np"
+)
+
+```
+
+##### ap_hi VS Cible
+
+```{r}
+#--- imc VS target  
+ggbetweenstats(
+  data = cardio, 
+  x = cardio, 
+  y = ap_hi, 
+  type = "np"
+)
+
+```
+
+
+##### ap_lo VS Cible
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- imc VS target  
+ggbetweenstats(
+  data = cardio, 
+  x = cardio, 
+  y = ap_lo, 
+  type = "np"
+)
+
+```
+
+------------------------------------------------------------------------
+
+
+### [Analyse de correlation]{.underline}
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- correlation plot
+plot_correlate(cardio, method = "spearman")
+
+
+```
+
+------------------------------------------------------------------------
+
+### [Analyse des variables catégorielles]{.underline}
+
+#### Graphiques en barres
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- all categorical variables
+cardio |> 
+  select(-cardio) |> 
+  plot_bar()
+
+```
+
+#### Variables catégorielle VS Cible
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- by target 
+plot_bar(cardio, by = "cardio")
+
+```
+
+
+#### Variables : Cholesterol, Glucose, Active
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- bivariate plots
+library(SmartEDA)
+
+ExpCatViz(
+  cardio |> 
+    select(cardio, cholesterol, gluc, active),
+    target = "cardio")
+
+```
+
+#### Variables : Gender, Smoke, Alcool
+
+```{r, message=FALSE, warning=FALSE}
+#--- bivariate plots
+ExpCatViz(
+  cardio |> 
+    select(cardio, gender, smoke, alco),
+    target = "cardio")
+
+```
+
+------------------------------------------------------------------------
+
+
+### [Tests statistiques]{.underline}
+
+##### Cholesterole VS Cible
+
+```{r, message=FALSE, warning=FALSE}
+
+#--- update.packages("ggplo2")
+ggbarstats(data = cardio, x = cardio, y = cholesterol, 
+           label = "both")
+
+
+```
+
+##### Glucose VS Cible
+
+```{r}
+
+#--- Gluc VS target 
+ggbarstats(data = cardio, x = cardio, y = gluc, 
+           label = "both")
+
+```
+
+##### Activité VS Cible
+
+```{r}
+#--- Activ VS target 
+ggbarstats(data = cardio, x = cardio, y = active, 
+           label = "both")
+
+```
+
+
+
+
+```{r, warning=FALSE, message=FALSE}
+library(isotree)
+library(ggplot2)
+
+cardio_iso <- cardio
+
+ggplot(cardio_iso, aes(x = ap_hi, y = ap_lo)) + 
+  geom_point(shape = 1, alpha = 0.5) +
+  labs(x = "ap_hi", y = "ap_lo") +
+  labs(alpha = "", colour="Legend")
+
+
+
+```
+
+
+```{r, message=FALSE, wa}
+#create isolation forest using isolationForest function from solitude package with default parameters
+
+cardio_iso_sub <- cardio_iso |> purrr::keep(is.numeric)
+
+cardio_iso_scaled <- scale(cardio_iso_sub)
+
+# train isolationforest algo
+iso_model <- isolation.forest(
+  cardio_iso_scaled,
+  ntrees = 300,
+  sample_size = "auto",
+  ndim = 1,
+  nthreads = parallel::detectCores(),
+  seed = 42
+)
+
+
+# Score 
+scores <- predict(iso_model, cardio_iso_scaled, type = "score")
+
+# Labels
+contamination <- 0.005
+threshold <- quantile(scores, 1 - contamination)
+labels <- ifelse(scores >= threshold, 1, 0)
+
+
+
+# Ajout dataframe 
+cardio_iso_scaled <- as.data.frame(cardio_iso_scaled)
+cardio_iso_scaled$scores <- scores
+cardio_iso_scaled$labels <- as.factor(labels)
+
+
+  
+```
+
+
+```{r}
+ggplot(cardio_iso_scaled, aes(x = scores)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+  theme_minimal() +
+  ggtitle("Distribution des scores d'anomalie (Isolation Forest)")
+
+```
+
+
+```{r}
+
+ggplot(cardio_iso_scaled, 
+       aes(x = ap_hi, y = ap_lo, color =labels)) +
+  geom_point(alpha = 0.6) +
+  theme_minimal()
+
+```
+
+
+
+
+
+```{r}
+# Save data 
+path_data_save <- here::here("data","process", "cardio_impute.csv")
+write.csv(cardio, path_data_save, row.names = FALSE)
+
+```
+
+
+
+------------------------------------------------------------------------
+
+### Conclusion
+
+L’objectif de ce projet est de prédire le risque cardiovasculaire chez de nouveaux patients afin d’optimiser leur prise en charge. L’objectif de cette série d’analyses était de mieux comprendre les variables disponibles. L’échantillon étudié comprend 70 000 patients, et les données sont équilibrées.
+
+L’analyse s’est déroulée en deux grandes étapes :
+
+
+**1. Variables quantitatives** :
+
+Ces variables ne suivent pas une distribution normale. Par conséquent, j’ai appliqué des tests non paramétriques pour la comparaison des moyennes (notamment le test de Mann-Whitney). J’ai également procédé à une imputation des valeurs aberrantes afin de corriger la distribution des variables quantitatives et d’améliorer la précision des tests statistiques. Les variables quantitatives les plus marquantes sont la **pression artérielle systolique** et **diastolique**, suivies respectivement par l’**âge** et l’**indice de masse corporelle (IMC)**.
+
+
+**2. Variables qualitatives** :
+
+La variable la plus remarquable est le **taux de cholestérol**. En effet, plus le cholestérol est élevé chez un patient, plus le risque cardiovasculaire est important.
+
+
+
